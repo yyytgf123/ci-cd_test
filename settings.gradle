@@ -7,9 +7,10 @@ ext.isCi = System.getenv('CI') != null
 buildCache {
     local { enabled = !isCi }
     remote(com.github.burrunan.s3cache.AwsS3BuildCache) {
-        region = 'ap-northeast-2'
+        region = 'us-east-1'
         bucket = 'my-ci-cache'
         prefix = 'gradle-build-cache/'
+        endpoint = System.getenv('S3_ENDPOINT') ?: ''
         push = isCi
     }
 }
