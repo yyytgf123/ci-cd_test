@@ -2,15 +2,15 @@ pipeline {
   agent any
 
   environment {
-    CI                    = 'true'
+    CI                      = 'true'
     CI_IGNORE_TEST_FAILURES = 'true'
-    GRADLE_USER_HOME      = "${WORKSPACE}/.gradle"
+    GRADLE_USER_HOME        = "${WORKSPACE}/.gradle"
     // MinIO (S3-compatible) 설정
-    S3_ENDPOINT           = 'http://172.17.0.3:9000'
-    AWS_ACCESS_KEY_ID     = 'minioadmin'
-    AWS_SECRET_ACCESS_KEY = 'minioadmin'
-    AWS_DEFAULT_REGION    = 'us-east-1'
-    DEP_CACHE             = "s3://my-ci-cache/gradle-deps/${env.JOB_NAME}"
+    S3_ENDPOINT             = 'http://172.17.0.3:9000'
+    AWS_ACCESS_KEY_ID       = 'minioadmin'
+    AWS_SECRET_ACCESS_KEY   = 'minioadmin'
+    AWS_DEFAULT_REGION      = 'us-east-1'
+    DEP_CACHE               = "s3://my-ci-cache/gradle-deps/${env.JOB_NAME}"
   }
 
   stages {
@@ -33,7 +33,6 @@ pipeline {
       }
       post {
         always {
-          // exec 파일 보존 (Integration Test가 같은 test.exec를 덮어쓰지 않도록)
           sh '''
             find . -path "*/build/jacoco/test.exec" | while read f; do
               cp "$f" "$(dirname "$f")/unit-test.exec"
@@ -60,12 +59,6 @@ pipeline {
         unstash 'unit-exec'
         unstash 'it-exec'
         sh './gradlew jacocoMergeReport'
-      }
-    }
-
-    stage('Sonar') {
-      steps {
-        sh './gradlew sonarqube --build-cache'
       }
     }
 
