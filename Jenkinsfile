@@ -18,21 +18,26 @@ pipeline {
         KEY=$(sha256sum build.gradle settings.gradle gradle/wrapper/gradle-wrapper.properties 2>/dev/null | sha256sum | cut -c1-16)
         mkdir -p "${GRADLE_USER_HOME}"
         if aws --endpoint-url "${S3_ENDPOINT}" s3 cp "${DEP_CACHE}/${KEY}.tar.zst" - 2>/dev/null | zstd -d | tar x -C "${GRADLE_USER_HOME}"; then
-          echo "✅ deps cache HIT: ${KEY}"
+          echo "deps cache HIT: ${KEY}"
         else
-          echo "❌ deps cache MISS: ${KEY}"
+          echo "deps cache MISS: ${KEY}"
         fi
       ''' }
     }
 
     stage('Unit Test') {
       steps {
+        sh 'chmod +x gradlew'
         sh './gradlew test --build-cache'
       }
       post {
         always {
           // exec 파일 보존 (Integration Test가 같은 test.exec를 덮어쓰지 않도록)
-          sh 'find . -path "*/build/jacoco/test.exec" -exec cp {} $(dirname {})/unit-test.exec \\; || true'
+          sh '''
+            find . -path "*/build/jacoco/test.exec" | while read f; do
+              cp "$f" "$(dirname "$f")/unit-test.exec"
+            done
+          '''
           stash name: 'unit-exec', includes: '**/build/jacoco/unit-test.exec', allowEmpty: true
         }
       }
@@ -51,7 +56,6 @@ pipeline {
 
     stage('Coverage Report') {
       steps {
-        // unstash로 exec 파일 복원 (경로 불일치 방지: 원래 빌드 경로 그대로 유지)
         unstash 'unit-exec'
         unstash 'it-exec'
         sh './gradlew jacocoMergeReport'
@@ -69,9 +73,9 @@ pipeline {
         KEY=$(sha256sum build.gradle settings.gradle gradle/wrapper/gradle-wrapper.properties 2>/dev/null | sha256sum | cut -c1-16)
         if ! aws --endpoint-url "${S3_ENDPOINT}" s3 ls "${DEP_CACHE}/${KEY}.tar.zst" 2>/dev/null; then
           tar c -C "${GRADLE_USER_HOME}" caches/modules-2 | zstd | aws --endpoint-url "${S3_ENDPOINT}" s3 cp - "${DEP_CACHE}/${KEY}.tar.zst"
-          echo "✅ deps cache SAVED: ${KEY}"
+          echo "deps cache SAVED: ${KEY}"
         else
-          echo "ℹ️ deps cache already exists: ${KEY}"
+          echo "deps cache already exists: ${KEY}"
         fi
       ''' }
     }
