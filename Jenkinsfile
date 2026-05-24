@@ -5,20 +5,22 @@ pipeline {
     CI                      = 'true'
     CI_IGNORE_TEST_FAILURES = 'true'
     GRADLE_USER_HOME        = "${WORKSPACE}/.gradle"
-    // MinIO (S3-compatible) 설정
-    S3_ENDPOINT             = 'http://172.17.0.3:9000'
-    AWS_ACCESS_KEY_ID       = 'minioadmin'
-    AWS_SECRET_ACCESS_KEY   = 'minioadmin'
-    AWS_DEFAULT_REGION      = 'us-east-1'
+    AWS_DEFAULT_REGION      = 'ap-northeast-2'
     DEP_CACHE               = "s3://my-ci-cache/gradle-deps/${env.JOB_NAME}"
+    // Jenkins credentials 참조
+    AWS_CREDS               = credentials('aws-credentials')
+    SONAR_TOKEN             = credentials('sonar-token')
+    SONAR_HOST_URL          = 'http://172.17.0.4:9000'
   }
 
   stages {
     stage('Restore deps') {
       steps { sh '''
+        export AWS_ACCESS_KEY_ID="${AWS_CREDS_USR}"
+        export AWS_SECRET_ACCESS_KEY="${AWS_CREDS_PSW}"
         KEY=$(sha256sum build.gradle settings.gradle gradle/wrapper/gradle-wrapper.properties 2>/dev/null | sha256sum | cut -c1-16)
         mkdir -p "${GRADLE_USER_HOME}"
-        if aws --endpoint-url "${S3_ENDPOINT}" s3 cp "${DEP_CACHE}/${KEY}.tar.zst" - 2>/dev/null | zstd -d | tar x -C "${GRADLE_USER_HOME}"; then
+        if aws s3 cp "${DEP_CACHE}/${KEY}.tar.zst" - 2>/dev/null | zstd -d | tar x -C "${GRADLE_USER_HOME}"; then
           echo "deps cache HIT: ${KEY}"
         else
           echo "deps cache MISS: ${KEY}"
@@ -29,7 +31,11 @@ pipeline {
     stage('Unit Test') {
       steps {
         sh 'chmod +x gradlew'
-        sh './gradlew test --build-cache'
+        sh '''
+          export AWS_ACCESS_KEY_ID="${AWS_CREDS_USR}"
+          export AWS_SECRET_ACCESS_KEY="${AWS_CREDS_PSW}"
+          ./gradlew test --build-cache
+        '''
       }
       post {
         always {
@@ -45,7 +51,11 @@ pipeline {
 
     stage('Integration Test') {
       steps {
-        sh './gradlew test -Ptags=Integration --build-cache'
+        sh '''
+          export AWS_ACCESS_KEY_ID="${AWS_CREDS_USR}"
+          export AWS_SECRET_ACCESS_KEY="${AWS_CREDS_PSW}"
+          ./gradlew test -Ptags=Integration --build-cache
+        '''
       }
       post {
         always {
@@ -58,15 +68,31 @@ pipeline {
       steps {
         unstash 'unit-exec'
         unstash 'it-exec'
-        sh './gradlew jacocoMergeReport'
+        sh '''
+          export AWS_ACCESS_KEY_ID="${AWS_CREDS_USR}"
+          export AWS_SECRET_ACCESS_KEY="${AWS_CREDS_PSW}"
+          ./gradlew jacocoMergeReport
+        '''
+      }
+    }
+
+    stage('Sonar') {
+      steps {
+        sh '''
+          export AWS_ACCESS_KEY_ID="${AWS_CREDS_USR}"
+          export AWS_SECRET_ACCESS_KEY="${AWS_CREDS_PSW}"
+          ./gradlew sonar --build-cache
+        '''
       }
     }
 
     stage('Save deps') {
       steps { sh '''
+        export AWS_ACCESS_KEY_ID="${AWS_CREDS_USR}"
+        export AWS_SECRET_ACCESS_KEY="${AWS_CREDS_PSW}"
         KEY=$(sha256sum build.gradle settings.gradle gradle/wrapper/gradle-wrapper.properties 2>/dev/null | sha256sum | cut -c1-16)
-        if ! aws --endpoint-url "${S3_ENDPOINT}" s3 ls "${DEP_CACHE}/${KEY}.tar.zst" 2>/dev/null; then
-          tar c -C "${GRADLE_USER_HOME}" caches/modules-2 | zstd | aws --endpoint-url "${S3_ENDPOINT}" s3 cp - "${DEP_CACHE}/${KEY}.tar.zst"
+        if ! aws s3 ls "${DEP_CACHE}/${KEY}.tar.zst" 2>/dev/null; then
+          tar c -C "${GRADLE_USER_HOME}" caches/modules-2 | zstd | aws s3 cp - "${DEP_CACHE}/${KEY}.tar.zst"
           echo "deps cache SAVED: ${KEY}"
         else
           echo "deps cache already exists: ${KEY}"
