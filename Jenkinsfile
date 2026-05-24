@@ -10,7 +10,7 @@ pipeline {
     // Jenkins credentials 참조
     AWS_CREDS               = credentials('aws-credentials')
     SONAR_TOKEN             = credentials('sonar-token')
-    SONAR_HOST_URL          = 'http://172.17.0.4:9000'
+    SONAR_HOST_URL          = 'http://sonarqube:9000'
   }
 
   stages {
