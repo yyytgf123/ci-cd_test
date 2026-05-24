@@ -13,6 +13,9 @@ buildCache {
         prefix = 'gradle-build-cache/'
         endpoint = System.getenv('S3_ENDPOINT') ?: ''
         push = isCi
+        lookupDefaultAwsCredentials = true
+        awsAccessKeyId = System.getenv('AWS_ACCESS_KEY_ID') ?: ''
+        awsSecretKey = System.getenv('AWS_SECRET_ACCESS_KEY') ?: ''
     }
 }
 
