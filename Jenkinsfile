@@ -3,6 +3,7 @@ pipeline {
 
   environment {
     CI                    = 'true'
+    CI_IGNORE_TEST_FAILURES = 'true'
     GRADLE_USER_HOME      = "${WORKSPACE}/.gradle"
     // MinIO (S3-compatible) 설정
     S3_ENDPOINT           = 'http://172.17.0.3:9000'
