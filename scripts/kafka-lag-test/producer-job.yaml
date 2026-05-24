@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-lag-producer
+  namespace: dev
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        role: service-app
+      containers:
+        - name: producer
+          image: bitnami/kafka:3.6
+          command:
+            - bash
+            - -c
+            - |
+              BOOTSTRAP="courm-kafka.courm-kafka.svc.cluster.local:9092"
+              TOPIC="payment-events"
+
+              # seed-orders-job이 삽입한 order_id UUID 목록을 RDS에서 가져오기
+              # 여기서는 고정 UUID 범위 대신 동적 생성 방식 사용
+              # (실제 DB에서 가져오려면 psql 이미지 사용 필요)
+              # → seed job의 buyer_id = 00000000-0000-0000-0000-000000000001 로 식별
+
+              # ────────────────────────────────────
+              # 단계별 TPS 부하 계획:
+              #  Phase 1: 10 TPS × 60s  = 600 msgs  (베이스라인)
+              #  Phase 2: 30 TPS × 60s  = 1800 msgs (중간 부하)
+              #  Phase 3: 60 TPS × 60s  = 3600 msgs (고부하)
+              #  Phase 4: 100 TPS × 60s = 6000 msgs (최대 부하)
+              # ────────────────────────────────────
+
+              send_messages() {
+                local TPS=$1
+                local DURATION_SEC=$2
+                local PHASE=$3
+                local TOTAL=$(( TPS * DURATION_SEC ))
+                local SLEEP_MS=$(echo "scale=6; 1 / $TPS" | bc)
+
+                echo "[Phase $PHASE] TPS=$TPS, duration=${DURATION_SEC}s, total=$TOTAL msgs"
+
+                for i in $(seq 1 $TOTAL); do
+                  ORDER_ID=$(cat /proc/sys/kernel/random/uuid)
+                  EVENT_ID=$(cat /proc/sys/kernel/random/uuid)
+                  OCCURRED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+
+                  PAYLOAD="{\"orderId\":\"${ORDER_ID}\"}"
+                  ENVELOPE="{\"eventId\":\"${EVENT_ID}\",\"eventType\":\"PAYMENT_FAILED\",\"aggregateType\":\"ORDER\",\"aggregateId\":\"${ORDER_ID}\",\"occurredAt\":\"${OCCURRED_AT}\",\"producer\":\"payment-service\",\"traceId\":\"lag-test-${PHASE}\",\"version\":\"1\",\"payload\":$(echo $PAYLOAD | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')}"
+
+                  echo "$ENVELOPE" | kafka-console-producer.sh \
+                    --bootstrap-server "$BOOTSTRAP" \
+                    --topic "$TOPIC" \
+                    --producer-property "acks=1" \
+                    2>/dev/null
+
+                  sleep "$SLEEP_MS"
+                done
+
+                echo "[Phase $PHASE] Done. Waiting 30s before next phase..."
+                sleep 30
+              }
+
+              echo "=== Kafka Lag Test Producer Start ==="
+              send_messages 10  60 1
+              send_messages 30  60 2
+              send_messages 60  60 3
+              send_messages 100 60 4
+              echo "=== All phases complete ==="

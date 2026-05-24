@@ -1,0 +1,39 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  kafka:
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      group-id: test-group-${random.uuid}
+    producer:
+      acks: all
+      retries: 3
+    admin:
+      properties:
+        bootstrap.servers: ${spring.kafka.bootstrap-servers}
+      auto-create: true
+
+event:
+  kafka:
+    topics:
+      order: order-events
+
+aws:
+  cognito:
+    jwk-set-uri: https://cognito-idp.ap-northeast-2.amazonaws.com/test-pool/.well-known/jwks.json
+
+# 테스트 환경 설정
+logging:
+  level:
+    com.groom: DEBUG
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN
+    org.testcontainers: INFO
+    org.hibernate.SQL: DEBUG

@@ -1,0 +1,244 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.9' apply false
+    id 'io.spring.dependency-management' version '1.1.7' apply false
+    id 'com.google.cloud.tools.jib' version '3.4.1' apply false
+    id 'org.sonarqube' version '7.1.0.6387' apply false
+    id 'org.owasp.dependencycheck' version '12.1.0' apply false
+    id 'org.cyclonedx.bom' version '2.2.0'
+}
+
+
+// 루트에서 jacocoMergeReport를 실행하기 위해 jacoco 플러그인 적용
+apply plugin: 'jacoco'
+
+// 루트에서 단일 프로젝트로 전체 모노레포 분석
+apply plugin: 'org.sonarqube'
+
+sonarqube {
+    properties {
+        property 'sonar.projectKey',  "${System.getenv('SONAR_ORGANIZATION') ?: 'HHLee'}_e_commerce_v3"
+        property 'sonar.projectName', 'e_commerce_v3'
+        property 'sonar.organization', System.getenv('SONAR_ORGANIZATION') ?: ''
+        property 'sonar.host.url',  System.getenv('SONAR_HOST_URL') ?: 'https://sonarcloud.io'
+        property 'sonar.token',     System.getenv('SONAR_TOKEN') ?: ''
+        property 'sonar.java.coveragePlugin', 'jacoco'
+        property 'sonar.coverage.jacoco.xmlReportPaths',
+            "${layout.buildDirectory.get()}/reports/jacoco/jacocoMergeReport/jacocoMergeReport.xml"
+    }
+}
+
+allprojects {
+    group = 'com.groom'
+    version = '0.0.1-SNAPSHOT'
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'org.springframework.boot'
+    apply plugin: 'io.spring.dependency-management'
+    apply plugin: 'jacoco'
+    apply plugin: 'org.owasp.dependencycheck'
+
+    // 서비스 모듈들에만 Jib 설정 적용
+    if (project.path.startsWith(":service:")) {
+        apply plugin: "com.google.cloud.tools.jib"
+
+        jib {
+            from{
+                image = 'amazoncorretto:17-alpine'
+                auth{
+                    username=''
+                    password=''
+                }
+            }
+
+            extraDirectories {
+                paths {
+                    path {
+                        from = file("${rootProject.projectDir}/infra/otel")
+                        into = "/otel"
+                    }
+                }
+            }
+
+            container {
+                jvmFlags = [
+                        '-Duser.timezone=Asia/Seoul',
+                        '-Xms256m',
+                        '-Xmx512m'
+                ]
+                ports = ['8080']
+                format = 'Docker'
+            }
+        }
+    }
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(17)
+        }
+    }
+
+    // 모든 서브 프로젝트의 bootJar를 기본적으로 비활성화
+    bootJar {
+        enabled = false
+    }
+
+    // 일반 jar 생성은 허용 (common 같은 모듈을 위해)
+    jar {
+        enabled = true
+    }
+
+    configurations {
+        compileOnly {
+            extendsFrom annotationProcessor
+        }
+    }
+
+    ext {
+        set('springCloudVersion', "2025.0.1")
+    }
+
+    dependencyManagement {
+        imports {
+            mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+        }
+    }
+
+    dependencies {
+        compileOnly 'org.projectlombok:lombok'
+        annotationProcessor 'org.projectlombok:lombok'
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+        implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.3'
+
+        // Monitoring
+        implementation 'org.springframework.boot:spring-boot-starter-actuator'
+        runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+        implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+
+        // Cognito
+        implementation 'com.auth0:java-jwt:4.4.0'
+        implementation 'com.auth0:jwks-rsa:0.22.1'
+        implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    }
+
+    test {
+        useJUnitPlatform {
+            // -Ptags=Integration  → Integration 테스트만 실행
+            // -Ptags=ContractTest → Contract 테스트만 실행
+            // (기본) Unit 테스트: Integration, ContractTest 제외
+            if (project.hasProperty('tags')) {
+                includeTags project.property('tags').toString()
+            } else {
+                excludeTags 'Integration', 'ContractTest'
+            }
+        }
+    }
+
+    jacocoTestReport {
+        dependsOn test
+        // Unit + Integration Test exec 파일을 함께 읽어 커버리지 합산
+        executionData.from(
+            fileTree(layout.buildDirectory.dir("jacoco")).matching {
+                include '**/*.exec'
+            }
+        )
+        reports {
+            xml.required = true
+            html.required = true
+        }
+    }
+
+    // CVE 대응 — 취약 transitive 의존성 버전 강제 업그레이드
+    configurations.all {
+        resolutionStrategy.eachDependency { DependencyResolveDetails details ->
+            // CVE-2025-48976: commons-fileupload < 1.6.0 DoS
+            if (details.requested.group == 'commons-fileupload') {
+                details.useVersion '1.6.0'
+                details.because 'CVE-2025-48976: fix in 1.6.0+'
+            }
+            // CVE-2025-7962: org.eclipse.angus smtp/jakarta.mail SMTP Injection
+            if (details.requested.group == 'org.eclipse.angus'
+                    && details.requested.name in ['smtp', 'jakarta.mail']) {
+                details.useVersion '2.0.4'
+                details.because 'CVE-2025-7962: fix in 2.0.4+'
+            }
+        }
+    }
+
+    compileJava.options.encoding = 'UTF-8'
+    compileTestJava.options.encoding = 'UTF-8'
+
+    dependencyCheck {
+        formats = ['HTML', 'JSON']
+        failBuildOnCVSS = 7
+        failOnError = false   // NVD API 장애/rate limit 때 빌드 자체가 죽지 않도록
+        suppressionFile = "${rootProject.projectDir}/dependency-check-suppressions.xml"
+        nvd {
+            apiKey         = System.getenv('NVD_API_KEY') ?: ''
+            delay          = 6000  // 요청 사이 딜레이(ms) — CI 동시빌드 rate limit 방지
+            validForHours  = 24    // 24시간 내 업데이트한 DB는 재사용
+            resultsPerPage = 500   // 한 번에 받는 CVE 데이터 줄여 OOM 완화
+        }
+        data {
+            // PVC 마운트 경로 우선, 없으면 홈 디렉토리 폴백 (로컬 개발 호환)
+            directory = new File('/gradle-cache/dependency-check-data').exists()
+                ? '/gradle-cache/dependency-check-data'
+                : "${System.getProperty('user.home')}/.gradle/dependency-check-data"
+        }
+        analyzers {
+            assemblyEnabled = false          // dotnet 없는 CI 환경에서 불필요한 경고 제거
+            ossIndex {
+                warnOnlyOnRemoteErrors = true // OSS Index 원격 오류를 경고로만 처리
+            }
+        }
+    }
+}
+
+tasks.register('jacocoMergeReport', JacocoReport) {
+    group = 'verification'
+    description = 'Merges JaCoCo exec files from all subprojects into a single report'
+
+    def serviceProjects = subprojects.findAll { it.path != ':service:common' }
+
+    executionData.from(serviceProjects.collect { sub ->
+        fileTree(sub.layout.buildDirectory.dir("jacoco")).matching {
+            include '**/*.exec'
+        }
+    })
+
+    sourceDirectories.from(serviceProjects.collect { it.sourceSets.main.java.srcDirs })
+    classDirectories.from(serviceProjects.collect { it.sourceSets.main.output })
+
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+// 이 리스트에 실행 가능한 BootJAR 생성
+def bootableProjects = [
+        project(':service:user'),
+        project(':service:order')
+]
+
+configure(bootableProjects) {
+    bootJar {
+        enabled = true
+    }
+    jar {
+        enabled = false
+    }
+    dependencies {
+        // [이동] 실제 서비스들만 common과 Swagger가 필요합니다.
+        implementation project(':service:common')
+        implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.3'
+    }
+}
+

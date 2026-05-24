@@ -1,0 +1,161 @@
+# Gradle CI 캐시를 S3로 구성 (Jenkins + EKS)
+
+## 목표
+멀티 AZ EKS 위에서 ephemeral Jenkins agent로 도는 Gradle CI에서,
+**의존성 캐시**와 **Gradle 빌드 캐시**를 모두 S3에 저장/복원한다.
+PV(EBS/EFS)를 쓰지 않으므로 agent가 어느 AZ에 뜨든 무관하다.
+
+파이프라인 단계: `Unit Test → Integration Test → Sonar`
+
+---
+
+## 왜 PV가 아니라 S3인가 (전제)
+- EBS는 AZ 단위라 멀티 AZ agent에서 attach가 깨진다. 동시 쓰기도 안 된다.
+- EFS는 가능하나 CI 캐시 용도엔 과하고 느리다.
+- S3는 region 단위 + 무상태라 ephemeral agent에 가장 잘 맞는다.
+- 따라서 캐시의 **유일한 영속 저장소 = S3**, pod 디스크는 임시 작업공간.
+
+---
+
+## 두 캐시의 차이 (헷갈리지 말 것)
+| 구분 | 대상 | 가져오는 주체 | 방식 |
+|---|---|---|---|
+| 의존성 캐시 | 외부 라이브러리 jar (`~/.gradle/caches/modules-2`) | **스크립트(내가)** | tar 1덩어리를 1회 pull/push |
+| 빌드 캐시 | 내 코드의 컴파일/테스트 산출물 (`.class` 등) | **Gradle이 자동** | task별 객체를 조각 단위로 pull/push |
+
+---
+
+## S3 버킷 구조
+```
+s3://my-ci-cache/
+├── gradle-deps/<job>/<key>.tar.zst   # 의존성 캐시 (덩어리)
+└── gradle-build-cache/<hash>...       # 빌드 캐시 (task별 객체 다수)
+```
+
+---
+
+## 구현 작업
+
+### 1. `settings.gradle` — S3 빌드 캐시 백엔드
+- 플러그인: `com.github.burrunan.s3-build-cache` 버전 `1.9.5` (현재 유지보수되는 것)
+- 로컬 캐시는 CI에서 끄고(컨테이너가 매번 날아감), remote만 사용
+- `push`는 CI에서만 true (로컬 개발자는 read-only)
+
+```groovy
+plugins {
+    id 'com.github.burrunan.s3-build-cache' version '1.9.5'
+}
+
+ext.isCi = System.getenv('CI') != null
+
+buildCache {
+    local { enabled = !isCi }
+    remote(com.github.burrunan.s3cache.AwsS3BuildCache) {
+        region = 'ap-northeast-2'
+        bucket = 'my-ci-cache'
+        prefix = 'gradle-build-cache/'
+        push = isCi
+        // 자격증명: IRSA로 자동 주입. accessKey 하드코딩 금지.
+    }
+}
+```
+
+### 2. `gradle.properties`
+```properties
+org.gradle.caching=true
+org.gradle.parallel=true
+```
+
+### 3. `Jenkinsfile`
+```groovy
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        spec:
+          serviceAccountName: jenkins-ci   # IRSA로 S3 권한 부여
+          containers:
+          - name: gradle
+            image: gradle:8.12-jdk21
+            command: ['sleep']
+            args: ['infinity']
+      '''
+    }
+  }
+
+  environment {
+    CI = 'true'
+    GRADLE_USER_HOME = "${WORKSPACE}/.gradle"
+    DEP_CACHE = "s3://my-ci-cache/gradle-deps/${env.JOB_NAME}"
+  }
+
+  stages {
+    stage('Restore deps') {
+      steps { container('gradle') { sh '''
+        KEY=$(sha256sum build.gradle settings.gradle gradle/wrapper/gradle-wrapper.properties 2>/dev/null | sha256sum | cut -c1-16)
+        if aws s3 cp "${DEP_CACHE}/${KEY}.tar.zst" - 2>/dev/null | zstd -d | tar x -C "${GRADLE_USER_HOME}"; then
+          echo "deps cache hit: ${KEY}"
+        else
+          echo "deps cache miss: ${KEY}"
+        fi
+      ''' } }
+    }
+
+    stage('Unit Test')        { steps { container('gradle') { sh './gradlew test --build-cache' } } }
+    stage('Integration Test') { steps { container('gradle') { sh './gradlew integrationTest --build-cache' } } }
+    stage('Sonar')            { steps { container('gradle') { sh './gradlew sonar --build-cache' } } }
+
+    stage('Save deps') {
+      steps { container('gradle') { sh '''
+        KEY=$(sha256sum build.gradle settings.gradle gradle/wrapper/gradle-wrapper.properties 2>/dev/null | sha256sum | cut -c1-16)
+        if ! aws s3 ls "${DEP_CACHE}/${KEY}.tar.zst" 2>/dev/null; then
+          tar c -C "${GRADLE_USER_HOME}" caches/modules-2 | zstd | aws s3 cp - "${DEP_CACHE}/${KEY}.tar.zst"
+        fi
+      ''' } }
+    }
+  }
+}
+```
+
+### 4. IAM 권한 (IRSA용 정책)
+`jenkins-ci` ServiceAccount에 연결할 IAM Role에 아래만 부여:
+```json
+{
+  "Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+  "Resource": [
+    "arn:aws:s3:::my-ci-cache",
+    "arn:aws:s3:::my-ci-cache/*"
+  ]
+}
+```
+
+---
+
+## 실행 흐름 (검증 시 기대 동작)
+```
+Pod 시작 (디스크 빔)
+ → Restore deps : tar 1개 pull, ~/.gradle/caches에 펼침      [의존성, 수동 1회]
+ → Unit Test    : compileJava/test → S3 build cache push     [빌드, 자동 조각]
+ → Integration  : unit의 .class를 S3에서 재사용 (compile SKIP) [빌드, 자동 조각]
+ → Sonar        : 위 산출물 + 커버리지 재사용                 [빌드, 자동 조각]
+ → Save deps    : 의존성 바뀐 경우만 tar push                 [의존성, 수동 1회]
+Pod 종료 (디스크 날아감, 원본은 S3에 남음)
+```
+
+---
+
+## 검증 체크리스트 (테스트 시 확인)
+1. **1차 빌드**: deps/build cache 모두 miss. S3에 객체가 생성되는지 확인.
+2. **2차 빌드 (코드 무변경)**: 
+   - deps cache hit 로그
+   - Gradle 출력에 `FROM-CACHE` 표시되는 task가 다수
+   - 빌드 시간이 1차 대비 크게 단축
+3. **소스 1줄 수정 후 빌드**: 바뀐 모듈만 재컴파일, 나머지는 `FROM-CACHE`.
+4. **의존성 추가 후 빌드**: deps cache miss → 새 KEY로 tar 재업로드.
+5. **다른 AZ 노드에서 빌드**: AZ가 달라도 S3 캐시가 정상 동작 (PV 없으므로).
+
+## 주의점 (cache miss 유발 요인)
+- 산출물에 타임스탬프/절대경로가 박히면 빌드 캐시 키가 매번 바뀜 → reproducible 설정 필요.
+- `gradle-wrapper.properties`까지 키에 포함해 Gradle 버전 변경도 감지.
+- 의존성 tar는 `caches/modules-2`만 묶을 것 (`caches` 전체는 비대해짐).

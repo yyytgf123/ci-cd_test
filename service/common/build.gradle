@@ -1,0 +1,50 @@
+plugins {
+    id 'java-library'
+}
+
+//1fd23132ew2123323fd1213131332fd3131s22312123322
+
+dependencies {
+    // Spring Boot Starters
+    api 'org.springframework.boot:spring-boot-starter-web'
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
+    api 'org.springframework.boot:spring-boot-starter-security'
+    api 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Spring Cloud OpenFeign
+    api 'org.springframework.cloud:spring-cloud-starter-openfeign'
+    api 'org.springframework.cloud:spring-cloud-starter-loadbalancer'
+    api 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
+
+    // Spring Retry 추가
+    api 'org.springframework.retry:spring-retry'
+    api 'org.springframework:spring-aspects'
+
+    // JWT
+    api 'io.jsonwebtoken:jjwt-api:0.11.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+
+    // QueryDSL (Q클래스 생성용)
+    api 'com.querydsl:querydsl-jpa:5.0.0:jakarta'
+    annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jakarta'
+    annotationProcessor 'jakarta.annotation:jakarta.annotation-api'
+    annotationProcessor 'jakarta.persistence:jakarta.persistence-api'
+
+
+    // Swagger
+    api 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.3'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    // Kafka
+    implementation 'org.springframework.kafka:spring-kafka'
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
+
+    // AWS Cognito SDK
+    implementation platform('software.amazon.awssdk:bom:2.25.0')
+    implementation 'software.amazon.awssdk:cognitoidentityprovider'
+
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+}

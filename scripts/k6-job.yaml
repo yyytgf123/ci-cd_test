@@ -1,0 +1,120 @@
+---
+# k6 부하테스트 Job — ALB/NLB 없이 클러스터 내부에서 실행
+# Istio Gateway API가 생성한 내부 서비스(prod-gw-istio)로 직접 트래픽 전송
+#
+# 사전 준비:
+#   # 1. k6 스크립트를 ConfigMap으로 등록
+#   kubectl create configmap k6-script \
+#     --from-file=k6_e2e_flow.js=e_commerce_v3/scripts/k6_e2e_flow.js \
+#     -n prod --dry-run=client -o yaml | kubectl apply -f -
+#
+#   # 2. 토큰 Secret 생성 (Cognito 로그인 토큰 100개를 콤마로 이어붙인 값)
+#   kubectl create secret generic k6-tokens \
+#     --from-literal=token_list="eyJhb...,eyJhb..." \
+#     -n prod --dry-run=client -o yaml | kubectl apply -f -
+#
+#   # 3. Job 실행
+#   kubectl apply -f k6-job.yaml
+#
+#   # 4. 로그 확인
+#   kubectl logs -n prod -l job-name=k6-load-test -f
+#
+#   # 5. 완료 후 정리
+#   kubectl delete -f k6-job.yaml
+#   kubectl delete configmap k6-script -n prod
+#   kubectl delete secret k6-tokens -n prod
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-load-test
+  namespace: prod
+  labels:
+    app: k6-load-test
+spec:
+  # 완료 후 자동 삭제: 300초
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: k6-load-test
+        # Istio sidecar 주입 제외 (k6 자체가 HTTP 클라이언트이므로 불필요)
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: Never
+
+      # Karpenter: CI 전용 노드풀에 스케줄
+      nodeSelector:
+        role: ci
+      tolerations:
+        - key: "role"
+          operator: "Equal"
+          value: "ci"
+          effect: "NoSchedule"
+
+      containers:
+        - name: k6
+          image: grafana/k6:0.54.0
+          command: ["k6", "run"]
+          args:
+            - "/scripts/k6_e2e_flow.js"
+            - "--out"
+            - "json=/tmp/k6_result.json"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+          env:
+            # ── 접속 대상: Istio Gateway 내부 ClusterIP ──────────────────────
+            - name: BASE_URL
+              value: "http://prod-gw-istio.istio-system.svc.cluster.local"
+
+            # ── Host 헤더: gateway-prod.yaml 의 hostname 값과 일치 ──────────
+            - name: HOST_USER
+              value: "user.example.com"
+            - name: HOST_PRODUCT
+              value: "product.example.com"
+            - name: HOST_CART
+              value: "cart.example.com"
+            - name: HOST_ORDER
+              value: "order.example.com"
+            - name: HOST_PAYMENT
+              value: "payment.example.com"
+
+            # ── 부하 설정: HPA 트리거 충분한 VU ─────────────────────────────
+            # CPU 60% 초과 목표 → VU 50~100 (서비스 리소스 cpu=1 기준)
+            - name: TEST_MODE
+              value: "duration"
+            - name: DURATION
+              value: "10m"
+            - name: VUS
+              value: "80"
+
+            # ── 상품 ID (실제 존재하는 product UUID로 교체) ──────────────────
+            - name: PRODUCT_ID
+              value: "a0000000-0000-0000-0000-000000001001"
+
+            # ── Kafka 이벤트 대기 설정 ────────────────────────────────────────
+            - name: CART_CLEAR_MODE
+              value: "event"
+            - name: EVENT_WAIT_TIMEOUT_SEC
+              value: "30"
+
+            # ── 인증 토큰 (Secret에서 주입) ───────────────────────────────────
+            - name: TOKEN_LIST
+              valueFrom:
+                secretKeyRef:
+                  name: k6-tokens
+                  key: token_list
+
+          volumeMounts:
+            - name: k6-script
+              mountPath: /scripts
+
+      volumes:
+        - name: k6-script
+          configMap:
+            name: k6-script

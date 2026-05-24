@@ -1,0 +1,71 @@
+plugins {
+    id 'org.springframework.cloud.contract' version '4.2.1'
+    id 'maven-publish'
+}
+
+publishing {
+    publications {
+        stubs(MavenPublication) {
+            groupId = 'com.groom'
+            artifactId = 'order'
+            version = '0.0.1-SNAPSHOT'
+            artifact verifierStubsJar
+        }
+    }
+}
+
+contracts {
+    testFramework = org.springframework.cloud.contract.verifier.config.TestFramework.JUNIT5
+    baseClassForTests = 'com.groom.order.contract.OrderInternalContractBase'
+    contractsDslDir = file("src/test/resources/contracts")
+}
+
+dependencies {
+    implementation project(':service:common')
+    // [추가!] 웹 서버(Tomcat)를 실행하기 위해 반드시 필요합니다.
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // [추가!] JPA를 사용하신다면 반드시 필요합니다. (QueryDSL만으로는 부족합니다)
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+    // [추가!] 스웨거 UI 라이브러리 (이게 없으면 경로 자체가 생성 안 됩니다)
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.3'
+
+    // Database
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // QueryDSL
+    implementation 'com.querydsl:querydsl-jpa:5.0.0:jakarta'
+    annotationProcessor 'com.querydsl:querydsl-apt:5.0.0:jakarta'
+    annotationProcessor 'jakarta.annotation:jakarta.annotation-api'
+    annotationProcessor 'jakarta.persistence:jakarta.persistence-api'
+
+    // Test
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.awaitility:awaitility:4.2.0'
+    testImplementation 'org.testcontainers:testcontainers:1.19.7'
+    testImplementation 'org.testcontainers:junit-jupiter:1.19.7'
+    testImplementation 'org.testcontainers:kafka:1.19.7'
+    testImplementation 'org.testcontainers:postgresql:1.19.7'
+
+    // Kafka
+    implementation 'org.springframework.kafka:spring-kafka'
+    testImplementation 'org.springframework.kafka:spring-kafka-test'
+
+    // Contract Test (Provider)
+    testImplementation 'org.springframework.cloud:spring-cloud-contract-verifier'
+    testImplementation 'io.rest-assured:spring-mock-mvc'
+    testImplementation 'com.h2database:h2'
+}
+
+test {
+    testLogging {
+        exceptionFormat = 'full'
+        showStackTraces = true
+        showStandardStreams = false
+    }
+}
+bootJar {
+    enabled = true
+    mainClass = 'com.groom.order.OrderApplication'
+}

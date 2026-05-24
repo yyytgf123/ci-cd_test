@@ -1,0 +1,43 @@
+AWS_COGNITO_JWK_SET_URI: https://cognito-idp.ap-northeast-2.amazonaws.com/test-pool/.well-known/jwks.json
+
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers}
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      group-id: test-group-${random.uuid}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: https://cognito-idp.ap-northeast-2.amazonaws.com/test-pool/.well-known/jwks.json
+
+aws:
+  cognito:
+    enabled: false
+    region: ap-northeast-2
+    client-id: test-client-id
+    client-secret: test-client-secret
+    user-pool-id: ap-northeast-2_testpool
+    jwk-set-uri: https://cognito-idp.ap-northeast-2.amazonaws.com/test-pool/.well-known/jwks.json
+
+event:
+  kafka:
+    topics:
+      user: user-events
+
+logging:
+  level:
+    com.groom: DEBUG
+    org.springframework.kafka: INFO
+    org.testcontainers: INFO
+    org.hibernate.SQL: DEBUG

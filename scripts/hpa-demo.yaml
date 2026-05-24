@@ -1,0 +1,414 @@
+---
+# hpa-demo.yaml — Argo Rollouts 기반 HPA 스케일링 데모 (포트폴리오용)
+#
+# CPU 제어: Python perf_counter 기반 busy-sleep 루프
+#   CPU_LOAD=0.085 → 8.5% of 1 core = 85m / request=100m → 표시 85%
+# MEM 제어: Python bytearray 고정 할당
+#   MEM_MB=43 → 43Mi / request=64Mi → 표시 67%
+#
+# 정리: kubectl delete -f hpa-demo.yaml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# user-service  cpu≈85%  mem≈67%  (min=2 → max=3)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: user-service
+  namespace: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      containers:
+        - name: app
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              apk add -q python3 2>/dev/null
+              python3 - << 'PYEOF'
+              import time, os
+              cpu = float(os.environ['CPU_LOAD'])
+              buf = bytearray(int(os.environ['MEM_MB']) * 1024 * 1024)
+              cycle = 0.1
+              while True:
+                  s = time.perf_counter()
+                  while time.perf_counter() - s < cpu * cycle: pass
+                  r = cycle - (time.perf_counter() - s)
+                  if r > 0: time.sleep(r)
+              PYEOF
+          env:
+            - name: CPU_LOAD
+              value: "0.085"
+            - name: MEM_MB
+              value: "43"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+  strategy:
+    canary:
+      steps: []
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service-hpa
+  namespace: prod
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: user-service
+  minReplicas: 2
+  maxReplicas: 3
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# product-service  cpu≈90%  mem≈64%  (min=2 → max=3)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: product-service
+  namespace: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      containers:
+        - name: app
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              apk add -q python3 2>/dev/null
+              python3 - << 'PYEOF'
+              import time, os
+              cpu = float(os.environ['CPU_LOAD'])
+              buf = bytearray(int(os.environ['MEM_MB']) * 1024 * 1024)
+              cycle = 0.1
+              while True:
+                  s = time.perf_counter()
+                  while time.perf_counter() - s < cpu * cycle: pass
+                  r = cycle - (time.perf_counter() - s)
+                  if r > 0: time.sleep(r)
+              PYEOF
+          env:
+            - name: CPU_LOAD
+              value: "0.090"
+            - name: MEM_MB
+              value: "41"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+  strategy:
+    canary:
+      steps: []
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: product-service-hpa
+  namespace: prod
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: product-service
+  minReplicas: 2
+  maxReplicas: 3
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# order-service  cpu≈95%  mem≈78%  (min=2 → max=4)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: order-service
+  namespace: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: app
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              apk add -q python3 2>/dev/null
+              python3 - << 'PYEOF'
+              import time, os
+              cpu = float(os.environ['CPU_LOAD'])
+              buf = bytearray(int(os.environ['MEM_MB']) * 1024 * 1024)
+              cycle = 0.1
+              while True:
+                  s = time.perf_counter()
+                  while time.perf_counter() - s < cpu * cycle: pass
+                  r = cycle - (time.perf_counter() - s)
+                  if r > 0: time.sleep(r)
+              PYEOF
+          env:
+            - name: CPU_LOAD
+              value: "0.095"
+            - name: MEM_MB
+              value: "50"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+  strategy:
+    canary:
+      steps: []
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-service-hpa
+  namespace: prod
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: order-service
+  minReplicas: 2
+  maxReplicas: 4
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# payment-service  cpu≈90%  mem≈73%  (min=2 → max=4)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: payment-service
+  namespace: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+        - name: app
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              apk add -q python3 2>/dev/null
+              python3 - << 'PYEOF'
+              import time, os
+              cpu = float(os.environ['CPU_LOAD'])
+              buf = bytearray(int(os.environ['MEM_MB']) * 1024 * 1024)
+              cycle = 0.1
+              while True:
+                  s = time.perf_counter()
+                  while time.perf_counter() - s < cpu * cycle: pass
+                  r = cycle - (time.perf_counter() - s)
+                  if r > 0: time.sleep(r)
+              PYEOF
+          env:
+            - name: CPU_LOAD
+              value: "0.090"
+            - name: MEM_MB
+              value: "47"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+  strategy:
+    canary:
+      steps: []
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: payment-service-hpa
+  namespace: prod
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: payment-service
+  minReplicas: 2
+  maxReplicas: 4
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# cart-service  cpu≈72%  mem≈58%  (min=2 → max=2, 부하 적음)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: cart-service
+  namespace: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cart-service
+  template:
+    metadata:
+      labels:
+        app: cart-service
+    spec:
+      containers:
+        - name: app
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |
+              apk add -q python3 2>/dev/null
+              python3 - << 'PYEOF'
+              import time, os
+              cpu = float(os.environ['CPU_LOAD'])
+              buf = bytearray(int(os.environ['MEM_MB']) * 1024 * 1024)
+              cycle = 0.1
+              while True:
+                  s = time.perf_counter()
+                  while time.perf_counter() - s < cpu * cycle: pass
+                  r = cycle - (time.perf_counter() - s)
+                  if r > 0: time.sleep(r)
+              PYEOF
+          env:
+            - name: CPU_LOAD
+              value: "0.072"
+            - name: MEM_MB
+              value: "37"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+  strategy:
+    canary:
+      steps: []
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cart-service-hpa
+  namespace: prod
+spec:
+  scaleTargetRef:
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    name: cart-service
+  minReplicas: 2
+  maxReplicas: 2
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 60

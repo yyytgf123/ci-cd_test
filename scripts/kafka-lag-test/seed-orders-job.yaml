@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-orders
+  namespace: dev
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: postgres:15-alpine
+          env:
+            - name: PGPASSWORD
+              value: "courmadmin1234!"
+          command:
+            - sh
+            - -c
+            - |
+              psql -h courm-rds-order-prod.c9iosg68k3c4.ap-northeast-2.rds.amazonaws.com \
+                   -U courmadmin \
+                   -d courm_order \
+                   -c "
+              INSERT INTO orders (
+                id,
+                order_id,
+                order_number,
+                buyer_id,
+                total_payment_amt,
+                status,
+                recipient_name,
+                recipient_phone,
+                zip_code,
+                shipping_address,
+                created_at,
+                updated_at
+              )
+              SELECT
+                gen_random_uuid(),
+                gen_random_uuid(),
+                'DUMMY-' || LPAD(gs::text, 14, '0'),
+                '00000000-0000-0000-0000-000000000001'::uuid,
+                10000,
+                'PAID',
+                'Test User',
+                '010-0000-0000',
+                '00000',
+                'Test Address',
+                NOW(),
+                NOW()
+              FROM generate_series(1, 10000) AS gs;
+
+              SELECT COUNT(*) AS seeded FROM orders
+              WHERE buyer_id = '00000000-0000-0000-0000-000000000001';
+              "

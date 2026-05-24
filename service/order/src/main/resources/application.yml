@@ -1,0 +1,117 @@
+server:
+  port: 8080
+
+aws:
+  cognito:
+    region: ${AWS_COGNITO_REGION:ap-northeast-2}
+    jwk-set-uri: ${AWS_COGNITO_JWK_SET_URI}
+
+spring:
+  application:
+    name: service-order
+  datasource:
+#    url: jdbc:postgresql://localhost:5432/order_db
+    url: jdbc:postgresql://postgres.dev.svc.cluster.local:5432/order_db
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  data:
+    redis:
+      #host: localhost
+      host: master.courm-redis-prod.epf9hv.apn2.cache.amazonaws.com
+      port: 6379
+      
+  kafka:
+    bootstrap-servers: 3.34.5.9:9094,43.201.111.33:9094,3.34.48.116:9094
+    #RDS bootstrap-servers: 10.0.20.113:9092,10.0.20.89:9092,10.0.21.141:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        spring.json.add.type.headers: false
+    consumer:
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      group-id: order-service-group
+      enable-auto-commit: false
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "*"
+        spring.json.value.default.type: com.groom.common.event.envelope.EventEnvelope
+        spring.json.use.type.headers: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${AWS_COGNITO_JWK_SET_URI}
+
+# Feign Client Configuration
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 5000
+
+# Service URLs for Feign Clients
+external:
+  user-service:
+    url: ${USER_SERVICE_URL:http://user-service-dev-courm-app-active}
+  product-service:
+    url: ${PRODUCT_SERVICE_URL:http://product-service-dev-courm-app-active}
+
+logging:
+  level:
+    com.groom: DEBUG
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+event:
+  kafka:
+    topics:
+      order: order-events
+      payment: payment-events
+      product: product-events
+  envelope:
+    version: "1.0"
+
+outbox:
+  publisher:
+    delay-ms: 1000
+
+# prometheus
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus   # /actuator/health, /actuator/info, /actuator/prometheus 노출
+
+  endpoint:
+    prometheus:
+      enabled: true
+
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http:
+          server:
+            requests: true                # p95/p99 계산용 bucket 생성
+  prometheus:
+    metrics:
+      export:
+        enabled: true

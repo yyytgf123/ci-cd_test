@@ -1,0 +1,19 @@
+# KEDA lag 측정용 오버라이드 values
+# 용도: 단일 pod로 처리 속도(TPS) 측정 → lagThreshold 계산
+# 사용: helm upgrade ... -f value-dev.yaml -f test-consumer-values.yaml
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: "1"
+    memory: "1.2Gi"   # 실제 운영과 동일 메모리 조건
+  limits:
+    cpu: "1"
+    memory: "1.2Gi"
+
+hpa:
+  enabled: false
+
+keda:
+  enabled: false
